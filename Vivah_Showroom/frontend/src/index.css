@@ -1,0 +1,150 @@
+/* ============================================================================
+   index.css — the site's entire design system in one file: colors, fonts,
+   animations, and a handful of small reusable CSS classes. Imported once by
+   src/main.jsx, so every component can use these via Tailwind classes like
+   bg-wine, font-display, dark:bg-noir, animate-fade-up, etc.
+
+   HOW THIS CONNECTS TO TAILWIND:
+   "@theme" (Tailwind v4 syntax) turns each color/font/animate variable
+   below into a matching Tailwind utility class automatically —
+   e.g. --color-wine becomes usable as bg-wine, text-wine, border-wine, etc.
+   This is why there is no separate tailwind.config.js file in this project;
+   Tailwind v4 configures itself from CSS variables declared right here.
+
+   DARK MODE: colors prefixed for dark mode (noir, charcoal, gold-dark) are
+   applied via "dark:" prefixed classes (e.g. dark:bg-noir) — see
+   context/ThemeContext.jsx for how the "dark" class gets added to <html>
+   in the first place.
+   ============================================================================ */
+@import "tailwindcss";
+
+/* Tailwind v4 defaults the "dark:" variant to the OS-level
+   prefers-color-scheme media query. This site instead toggles dark mode
+   manually by adding/removing a "dark" class on <html> (see
+   context/ThemeContext.jsx), so every dark:* utility class across the
+   codebase (dark:bg-noir, dark:text-ivory, etc.) needs this line to match
+   THAT class instead of the visitor's OS setting. Without it, dark:*
+   classes silently do nothing for anyone whose OS is set to light mode,
+   regardless of what they pick with this site's own sun/moon toggle. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Light theme — baby pink & light pink throughout, with dark ink text
+     for contrast (see --color-ink below, used via the `text-ink` class on
+     every light-mode heading/body copy in the site). Gold stays as the
+     metallic accent (dividers, stars, labels) — pink + antique gold is a
+     classic Indian-wedding pairing and doesn't fight the pink backgrounds. */
+  --color-ivory: #FADCE6;      /* slightly deeper baby pink — the lightest background AND, since this
+                                   same token is reused as `dark:text-ivory` across the
+                                   site, it's kept light enough (verified against WCAG
+                                   contrast math, not just by eye) to still read clearly
+                                   as light text on dark backgrounds in dark mode, and to
+                                   keep the ivory-on-wine button text near AA contrast. */
+  --color-parchment: #F3C3D9;  /* deeper pink — secondary section backgrounds (e.g. testimonials card) */
+  --color-wine: #C2255C;       /* deep pink/rose — primary buttons, links, active states.
+                                   Renamed in spirit only; the CSS variable name "wine" is
+                                   kept so every existing bg-wine/text-wine/border-wine class
+                                   across the codebase updates automatically without
+                                   touching each component file individually. */
+  --color-wine-deep: #9E1C49;  /* darker rose — hover state for wine buttons */
+  --color-gold: #B4893F;
+  --color-gold-bright: #D9B15C;
+  --color-blush: #EFB0CC;      /* deeper pink — image placeholder backgrounds */
+  --color-ink: #241512;        /* dark text color, unchanged — stays dark on every light-pink background above */
+
+  /* Dark theme — unchanged; already light text (via the ivory token above) on dark backgrounds */
+  --color-noir: #150D0C;
+  --color-charcoal: #211714;
+  --color-navy: #171B26;
+  --color-gold-dark: #D9AE55;
+
+  --font-display: 'Cormorant Garamond', 'Times New Roman', serif;
+  --font-label: 'Cinzel', serif;
+  --font-body: 'Manrope', system-ui, sans-serif;
+
+  --animate-fade-up: fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-drape: drape 1.1s cubic-bezier(0.65, 0, 0.35, 1) both;
+  --animate-shimmer: shimmer 2.5s linear infinite;
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes drape {
+    from { clip-path: inset(0 0 100% 0); }
+    to { clip-path: inset(0 0 0% 0); }
+  }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--color-ivory);
+  color: var(--color-ink);
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+.dark body,
+html.dark body {
+  background-color: var(--color-noir);
+  color: #EFE6DD;
+}
+
+::selection {
+  background-color: var(--color-gold);
+  color: var(--color-ivory);
+}
+
+/* Kundan-thread divider — the signature motif: a gold rule with a faceted gem mark,
+   echoing the jewellery embroidery borders seen across the showroom's own photography */
+.kundan-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.kundan-divider::before,
+.kundan-divider::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(90deg, transparent, currentColor, transparent);
+  opacity: 0.5;
+}
+.kundan-divider .gem {
+  width: 7px;
+  height: 7px;
+  transform: rotate(45deg);
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+/* Focus visibility for accessibility */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom scrollbar for the horizontal "trousseau rail" */
+.rail-scroll::-webkit-scrollbar { height: 6px; }
+.rail-scroll::-webkit-scrollbar-track { background: transparent; }
+.rail-scroll::-webkit-scrollbar-thumb { background: var(--color-gold); border-radius: 999px; }

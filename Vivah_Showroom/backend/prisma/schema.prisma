@@ -1,0 +1,398 @@
+// ============================================================================
+// prisma/schema.prisma — the ENTIRE Vivah Showroom database, in PostgreSQL.
+//
+// This project used to split its data across two databases: MongoDB
+// (everything except inventory) and PostgreSQL/Prisma (just InventoryItem/
+// InventoryMovement). That split is gone — every model below used to be a
+// Mongoose schema in backend/src/models/*.js; it's now a Prisma model
+// backed by this one PostgreSQL database. The stack is MERN with Postgres
+// standing in for Mongo (sometimes called "PERN") — React frontend,
+// Express/Node backend, PostgreSQL database, unchanged REST API shape.
+//
+// IDS: every model uses a Prisma `cuid()` string id instead of a Mongo
+// ObjectId. To avoid touching the frontend (which reads `_id` everywhere,
+// same as any Mongoose app), every API response still includes an `_id`
+// field aliased from `id` — see backend/src/utils/serialize.js. The
+// frontend needed ZERO changes for this migration.
+//
+// JSON fields: a few fields that were Mongoose *embedded subdocuments*
+// (Order.items, User.addresses, Product.reviews/sections/durationOptions/
+// sizeStock) stay as JSONB columns here rather than becoming separate
+// relational tables. They were never queried independently of their parent
+// document in Mongo either — always read/written as a whole array — so a
+// JSONB column is the direct, low-risk equivalent. Postgres native array
+// columns (String[]) replace simple Mongo string arrays (tags, images,
+// sizes, wishlist).
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// User — was models/User.js. Password hashing (bcrypt) and the
+// comparePassword/toSafeObject helpers move into backend/src/utils/userAuth.js
+// since Prisma models don't support Mongoose-style instance methods/hooks.
+// ---------------------------------------------------------------------------
+model User {
+  id                    String    @id @default(cuid())
+  name                  String
+  email                 String    @unique
+  phone                 String?
+  password              String?
+  role                  String    @default("customer") // "customer" | "admin"
+  isActive              Boolean   @default(true)
+  isGuest               Boolean   @default(false)
+  isVerified            Boolean   @default(false)
+  verificationToken     String?
+  resetPasswordToken    String?
+  resetPasswordExpires  DateTime?
+  // Embedded subdocuments in the old schema — kept as JSON, same shape:
+  // [{ id, label, line1, line2, city, state, pincode, isDefault }]
+  addresses             Json      @default("[]")
+  // Was an array of Product ObjectId refs — now an array of Product.id strings.
+  wishlist              String[]  @default([])
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  orders          Order[]
+  appointments    Appointment[]
+  notifications   Notification[]
+  uploadedMedia   Media[]
+  adminChallenges AdminOtpChallenge[]
+  heldLock        AdminLock?          @relation("AdminLockHolder")
+
+  @@index([role])
+}
+
+// ---------------------------------------------------------------------------
+// Category — was models/Category.js.
+// ---------------------------------------------------------------------------
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  group       String // "bride" | "groom" | "jewellery" | "footwear" | "couple" | "accessories"
+  description String?
+  bannerImage String?
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products Product[]
+}
+
+// ---------------------------------------------------------------------------
+// Product — was models/Product.js. `reviews`, `sections`, `durationOptions`,
+// `sizeStock` were Mongoose embedded-array subdocuments; JSONB here.
+// ---------------------------------------------------------------------------
+model Product {
+  id                String   @id @default(cuid())
+  name              String
+  categoryId        String
+  description       String?
+  images            String[] @default([])
+  colorway          String?
+  sizes             String[] @default([])
+  rentalPrice       Float
+  deposit           Float
+  durationOptions   Json     @default("[]") // [{ label, multiplier }]
+  available         Boolean  @default(true)
+  stock             Int      @default(1)
+  sizeStock         Json     @default("[]") // [{ size, quantity }]
+  lowStockThreshold Int      @default(2)
+  rating            Float    @default(0)
+  reviews           Json     @default("[]") // [{ userId, name, rating, comment, createdAt }]
+  tags              String[] @default([])
+  isFeatured        Boolean  @default(false)
+  status            String   @default("published") // "draft" | "published" | "archived"
+  sections          Json     @default("[]") // [{ title, visible, order, items: [{ title, description }] }]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  category      Category       @relation(fields: [categoryId], references: [id])
+  inventoryItem InventoryItem?
+
+  @@index([categoryId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Coupon — was models/Coupon.js.
+// ---------------------------------------------------------------------------
+model Coupon {
+  id                String    @id @default(cuid())
+  code              String    @unique
+  description       String?
+  discountType      String    @default("percent") // "percent" | "flat"
+  discountValue     Float
+  minOrderAmount    Float     @default(0)
+  maxDiscountAmount Float?
+  isActive          Boolean   @default(true)
+  expiresAt         DateTime?
+  usageLimit        Int?
+  usedCount         Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Order — was models/Order.js. `items` was an array of embedded
+// orderItemSchema subdocuments (never queried independently) — JSONB here,
+// hydrated with live Product details at read time (see orderController.js's
+// hydrateOrderItems()) to match the old `.populate('items.product')`.
+// ---------------------------------------------------------------------------
+model Order {
+  id                   String    @id @default(cuid())
+  userId               String
+  items                Json      @default("[]") // [{ product: productId, size, color, rentalStartDate, rentalEndDate, rentalTime, noOfDays, durationLabel, price, deposit }]
+  fulfilment           String    @default("pickup") // "pickup" | "delivery"
+  address              Json? // { line1, line2, city, state, pincode }
+  subtotal             Float?
+  depositTotal         Float?
+  grandTotal           Float?
+  status               String    @default("pending")
+  returnReminderSentAt DateTime?
+  paymentStatus        String    @default("unpaid")
+  paymentMode          String?
+  couponCode           String?
+  discountAmount       Float     @default(0)
+  inventoryReleased    Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id])
+  feedbacks Feedback[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Appointment — was models/Appointment.js. `user` optional (guest bookings).
+// ---------------------------------------------------------------------------
+model Appointment {
+  id            String   @id @default(cuid())
+  userId        String?
+  name          String
+  phone         String
+  email         String
+  category      String?
+  preferredDate DateTime
+  preferredTime String?
+  type          String   @default("fitting") // "fitting" | "trial" | "consultation"
+  notes         String?
+  status        String   @default("requested")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Banner — was models/Banner.js.
+// ---------------------------------------------------------------------------
+model Banner {
+  id        String   @id @default(cuid())
+  title     String?
+  subtitle  String?
+  image     String
+  ctaLabel  String?
+  ctaLink   String?
+  placement String   @default("hero") // "hero" | "category" | "promo"
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Feedback — was models/Feedback.js.
+// ---------------------------------------------------------------------------
+model Feedback {
+  id        String   @id @default(cuid())
+  name      String?
+  email     String?
+  rating    Int?
+  message   String?
+  orderRefId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orderRef Order? @relation(fields: [orderRefId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Gallery — was models/Gallery.js.
+// ---------------------------------------------------------------------------
+model Gallery {
+  id        String   @id @default(cuid())
+  image     String
+  caption   String?
+  category  String?
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Media — was models/Media.js.
+// ---------------------------------------------------------------------------
+model Media {
+  id           String   @id @default(cuid())
+  url          String
+  publicId     String?
+  filename     String?
+  usedIn       String?
+  uploadedById String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  uploadedBy User? @relation(fields: [uploadedById], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Message — was models/Message.js (contact form).
+// ---------------------------------------------------------------------------
+model Message {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String   @default("General Inquiry")
+  message   String
+  status    String   @default("new")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Notification — was models/Notification.js.
+// ---------------------------------------------------------------------------
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  body      String?
+  type      String   @default("system")
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Settings — was models/Settings.js. Generic key/value store.
+// ---------------------------------------------------------------------------
+model Settings {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// AdminLock — was models/AdminLock.js. Singleton row, fixed id "admin-lock",
+// enforcing the single-active-admin-session rule. See
+// backend/src/controllers/authController.js.
+// ---------------------------------------------------------------------------
+model AdminLock {
+  id          String    @id @default("admin-lock")
+  heldById    String?   @unique
+  heldByEmail String?
+  tokenJti    String?
+  lockedAt    DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  heldBy User? @relation("AdminLockHolder", fields: [heldById], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// AdminOtpChallenge — was models/AdminOtpChallenge.js. MongoDB had a native
+// TTL index to auto-delete expired challenges; Postgres has no equivalent,
+// so expired/consumed rows are deleted explicitly in code (authController.js
+// deletes on verify/expiry, and a periodic cleanup is safe to add via a cron
+// job calling `DELETE FROM "AdminOtpChallenge" WHERE "expiresAt" < now()`).
+// ---------------------------------------------------------------------------
+model AdminOtpChallenge {
+  id              String   @id @default(cuid())
+  adminId         String
+  phoneOtpHash    String
+  phoneVerified   Boolean  @default(false)
+  phoneAttempts   Int      @default(0)
+  phoneLastSentAt DateTime @default(now())
+  emailOtpHash    String
+  emailVerified   Boolean  @default(false)
+  emailAttempts   Int      @default(0)
+  emailLastSentAt DateTime @default(now())
+  maskedPhone     String?
+  maskedEmail     String?
+  ip              String?
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  admin User @relation(fields: [adminId], references: [id])
+
+  @@index([adminId])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// InventoryItem — owner-managed physical stock counts, one per Product.
+// Previously lived in a separate PostgreSQL database from everything else
+// above (which was MongoDB); now it's just another table in the same
+// database, so productId is a real foreign key.
+// ---------------------------------------------------------------------------
+model InventoryItem {
+  id                String   @id @default(cuid())
+  productId         String   @unique
+  sku               String?  @unique
+  totalUnits        Int      @default(1)
+  reservedUnits     Int      @default(0)
+  damagedUnits      Int      @default(0)
+  lowStockThreshold Int      @default(2)
+  location          String?
+  costPrice         Float?
+  notes             String?
+  sizeStock         Json? // [{ size, totalUnits, reservedUnits, damagedUnits }]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([updatedAt])
+}
+
+// ---------------------------------------------------------------------------
+// InventoryMovement — immutable audit trail. productId stays a plain string
+// (no FK) on purpose, so the audit history survives a product deletion.
+// ---------------------------------------------------------------------------
+model InventoryMovement {
+  id            String   @id @default(cuid())
+  productId     String
+  action        String // "create" | "update" | "adjust" | "delete"
+  field         String?
+  previousValue Json?
+  newValue      Json?
+  adminId       String
+  adminEmail    String
+  reason        String?
+  createdAt     DateTime @default(now())
+
+  @@index([productId, createdAt])
+}
