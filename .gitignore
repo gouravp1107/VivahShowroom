@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+build/
+coverage/
+.next/
+.vercel/
+
+# Private application data
+backend/data/db.json
+backend/data/OWNER-LOGIN.txt
+backend/data/secret.key
+backend/data/backups/
