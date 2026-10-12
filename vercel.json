@@ -1,8 +1,8 @@
 {
   "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "https://vivah-backend-yrp7.onrender.com/$1"
+      "source": "/:path*",
+      "destination": "https://vivah-backend-yrp7.onrender.com/:path*"
     }
   ]
 }
